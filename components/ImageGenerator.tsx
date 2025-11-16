@@ -2,15 +2,19 @@ import React, { useState, useCallback } from 'react';
 import { generateImage } from '../services/geminiService';
 import Spinner from './Spinner';
 
+const availableModels = [
+    { id: 'imagen-4.0-generate-001', name: 'Imagen 4 (High Quality)' },
+    { id: 'gemini-2.5-flash-image', name: 'Gemini 2.5 Flash Image (Fast)' }
+];
+
 const ImageGenerator: React.FC = () => {
   const [prompt, setPrompt] = useState<string>('');
-  const [apiKey, setApiKey] = useState<string>('');
+  // Fix: Per coding guidelines, API key is only from process.env, so remove UI and state for it.
+  const [selectedModel, setSelectedModel] = useState<string>(availableModels[0].id);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [lastKeyUsed, setLastKeyUsed] = useState<string | null>(null);
   const [curlCommand, setCurlCommand] = useState<string | null>(null);
-  const [keyCopied, setKeyCopied] = useState<boolean>(false);
   const [curlCopied, setCurlCopied] = useState<boolean>(false);
 
   const handleGenerateImage = useCallback(async () => {
@@ -22,13 +26,12 @@ const ImageGenerator: React.FC = () => {
     setLoading(true);
     setImageUrl(null);
     setError(null);
-    setLastKeyUsed(null);
     setCurlCommand(null);
 
     try {
-      const { imageUrl, apiKeyUsed, curlCommand } = await generateImage(prompt, apiKey);
+      // Fix: Removed apiKey from generateImage call.
+      const { imageUrl, curlCommand } = await generateImage(prompt, selectedModel);
       setImageUrl(imageUrl);
-      setLastKeyUsed(apiKeyUsed);
       setCurlCommand(curlCommand);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred.';
@@ -36,20 +39,14 @@ const ImageGenerator: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [prompt, apiKey]);
+    // Fix: Removed apiKey from dependency array.
+  }, [prompt, selectedModel]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleGenerateImage();
     }
-  };
-
-  const handleKeyCopy = (textToCopy: string) => {
-    navigator.clipboard.writeText(textToCopy).then(() => {
-        setKeyCopied(true);
-        setTimeout(() => setKeyCopied(false), 2000);
-    });
   };
 
   const handleCurlCopy = () => {
@@ -65,25 +62,28 @@ const ImageGenerator: React.FC = () => {
       <div className="w-full max-w-3xl bg-gray-800/50 rounded-2xl p-6 md:p-8 border border-gray-700 shadow-2xl shadow-indigo-500/10">
         <div className="flex flex-col space-y-4">
           <div className="flex flex-col space-y-2">
-            <label htmlFor="api-key" className="text-lg font-semibold text-gray-300">
-              API Key <span className="text-sm font-normal text-gray-400">(Optional)</span>
+            <label htmlFor="model-select" className="text-lg font-semibold text-gray-300">
+              Image Generation Model
             </label>
-            <input
-              id="api-key"
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="Enter your Gemini API Key"
-              className="w-full p-3 bg-gray-900 border border-gray-600 rounded-lg text-gray-200 placeholder-gray-500 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition duration-200"
-              disabled={loading}
-              aria-describedby="api-key-description"
-            />
-            <p id="api-key-description" className="text-xs text-gray-400">
-              Leave blank to use the default key provided by the application.
-            </p>
+            <div className="relative">
+                <select
+                    id="model-select"
+                    value={selectedModel}
+                    onChange={(e) => setSelectedModel(e.target.value)}
+                    className="w-full p-3 bg-gray-900 border border-gray-600 rounded-lg text-gray-200 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition duration-200 appearance-none"
+                    disabled={loading}
+                >
+                    {availableModels.map(model => (
+                        <option key={model.id} value={model.id}>{model.name}</option>
+                    ))}
+                </select>
+                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-gray-400">
+                    <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
+                </div>
+            </div>
           </div>
           
-          <div className="border-t border-gray-700 !my-5"></div>
+          {/* Fix: Removed API Key input and related UI elements. */}
 
           <label htmlFor="prompt" className="text-lg font-semibold text-gray-300">
             Describe the image you want to create
@@ -145,37 +145,7 @@ const ImageGenerator: React.FC = () => {
         </div>
         {imageUrl && (
           <div className="mt-4 w-full flex flex-col space-y-4">
-            <div className="w-full bg-gray-800/50 rounded-lg p-3 border border-gray-700 text-left">
-                {lastKeyUsed ? (
-                    <div className="flex items-center justify-between">
-                        <div className="overflow-hidden">
-                            <p className="text-sm text-gray-400 mb-1">API Key used for generation:</p>
-                            <code className="text-gray-300 text-xs break-all">{lastKeyUsed}</code>
-                        </div>
-                        <button
-                            onClick={() => handleKeyCopy(lastKeyUsed)}
-                            className="p-2 ml-4 rounded-md hover:bg-gray-700 transition-colors flex-shrink-0"
-                            aria-label="Copy API Key"
-                            title="Copy API Key"
-                        >
-                            {keyCopied ? (
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                </svg>
-                            ) : (
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                                </svg>
-                            )}
-                        </button>
-                    </div>
-                ) : (
-                    <div>
-                        <p className="text-sm text-gray-400 mb-1">API Key used for generation:</p>
-                        <p className="text-gray-300 text-sm font-medium">Default Application Key</p>
-                    </div>
-                )}
-            </div>
+            {/* Fix: Removed block displaying the API key used for generation. */}
 
             {curlCommand && (
                 <div className="w-full bg-gray-900/70 rounded-lg border border-gray-700 text-left relative">
