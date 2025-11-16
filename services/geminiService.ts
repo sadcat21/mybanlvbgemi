@@ -1,14 +1,12 @@
 import { GoogleGenAI, Modality } from "@google/genai";
 
-// Fix: Per coding guidelines, API key is only from process.env.
-// The function signature is updated to remove apiKey parameter and the return type is updated.
-export const generateImage = async (prompt: string, model: string): Promise<{ imageUrl: string; curlCommand: string; }> => {
-  // Fix: API key must be obtained exclusively from process.env.API_KEY.
-  const finalApiKey = process.env.API_KEY;
-
-  if (!finalApiKey) {
-    throw new Error("API key not found. Please ensure the API_KEY environment variable is set.");
-  }
+export const generateImage = async (
+  prompt: string, 
+  model: string, 
+  userApiKey?: string
+): Promise<{ imageUrl: string; curlCommand: string; apiKeyUsed: string; }> => {
+  // Use the user-provided API key if available, otherwise fall back to the hardcoded default.
+  const finalApiKey = userApiKey?.trim() ? userApiKey.trim() : 'AIzaSyD4f6VxUCpO77npCDtr8lEBY63Hru1GtvY';
   
   const ai = new GoogleGenAI({ apiKey: finalApiKey });
 
@@ -31,7 +29,6 @@ export const generateImage = async (prompt: string, model: string): Promise<{ im
   -H 'Content-Type: application/json' \\
   -d '${jsonPayload}'`;
 
-      // Fix: The 'model' property is required by the generateImages method.
       const response = await ai.models.generateImages({
         ...requestBody,
         model,
@@ -44,17 +41,18 @@ export const generateImage = async (prompt: string, model: string): Promise<{ im
 
     } else if (model === 'gemini-2.5-flash-image') {
       const requestBody = {
-        contents: {
+        contents: [{
           parts: [{ text: prompt }],
-        },
+        }],
         config: {
           responseModalities: [Modality.IMAGE],
         },
       };
 
-      // For the cURL command, the REST API expects 'generationConfig' instead of 'config'.
       const curlRequestBody = {
-        contents: requestBody.contents,
+        contents: {
+          parts: [{ text: prompt }]
+        },
         generationConfig: { 
           responseModalities: ['IMAGE']
         }
@@ -65,7 +63,6 @@ export const generateImage = async (prompt: string, model: string): Promise<{ im
   -H 'Content-Type: application/json' \\
   -d '${jsonPayload}'`;
 
-      // Fix: The 'model' property is required by the generateContent method.
       const response = await ai.models.generateContent({
         ...requestBody,
         model,
@@ -83,22 +80,32 @@ export const generateImage = async (prompt: string, model: string): Promise<{ im
 
     return {
       imageUrl: `data:image/jpeg;base64,${base64ImageBytes}`,
-      // Fix: Removed apiKeyUsed from return object as it's no longer relevant.
       curlCommand: curlCommand,
+      apiKeyUsed: finalApiKey,
     };
 
   } catch (error) {
     console.error(`Error generating image with ${model} via Gemini API:`, error);
+
     if (error instanceof Error) {
-        if (error.message.includes('API key not valid')) {
-            throw new Error('The API key is not valid. Please check your environment configuration.');
+        const message = error.message;
+        
+        if (/API key not valid/i.test(message)) {
+            throw new Error('The API key is not valid. Please check the key provided.');
         }
-        // Add specific handling for quota errors (HTTP 429)
-        if (error.message.includes('429') || error.message.toLowerCase().includes('quota')) {
+        if (/permission denied/i.test(message) || message.includes('[403]')) {
+            throw new Error('Permission Denied. The API key lacks the necessary permissions for this model.');
+        }
+        if (/quota exceeded/i.test(message) || message.includes('[429]')) {
             throw new Error('API quota exceeded. Please check your plan and billing details on the Google AI platform.');
         }
-        throw new Error(`Failed to generate image: ${error.message}`);
+        if (/400/.test(message)) {
+             throw new Error(`Invalid Request. The prompt may have been blocked due to safety policies, or the request was malformed. (Error 400)`);
+        }
+        
+        throw new Error(`Failed to generate image: ${message}`);
     }
+
     throw new Error("An unknown error occurred while communicating with the image generation service.");
   }
 };

@@ -9,13 +9,20 @@ const availableModels = [
 
 const ImageGenerator: React.FC = () => {
   const [prompt, setPrompt] = useState<string>('');
-  // Fix: Per coding guidelines, API key is only from process.env, so remove UI and state for it.
+  const [apiKey, setApiKey] = useState<string>('');
   const [selectedModel, setSelectedModel] = useState<string>(availableModels[0].id);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  
+  const [apiKeyUsed, setApiKeyUsed] = useState<string | null>(null);
   const [curlCommand, setCurlCommand] = useState<string | null>(null);
+  
+  const [apiKeyCopied, setApiKeyCopied] = useState<boolean>(false);
   const [curlCopied, setCurlCopied] = useState<boolean>(false);
+
+  const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  const [testMessage, setTestMessage] = useState<string | null>(null);
 
   const handleGenerateImage = useCallback(async () => {
     if (!prompt.trim()) {
@@ -27,20 +34,22 @@ const ImageGenerator: React.FC = () => {
     setImageUrl(null);
     setError(null);
     setCurlCommand(null);
+    setApiKeyUsed(null);
+    setTestStatus('idle');
+    setTestMessage(null);
 
     try {
-      // Fix: Removed apiKey from generateImage call.
-      const { imageUrl, curlCommand } = await generateImage(prompt, selectedModel);
+      const { imageUrl, curlCommand, apiKeyUsed } = await generateImage(prompt, selectedModel, apiKey);
       setImageUrl(imageUrl);
       setCurlCommand(curlCommand);
+      setApiKeyUsed(apiKeyUsed);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred.';
       setError(errorMessage);
     } finally {
       setLoading(false);
     }
-    // Fix: Removed apiKey from dependency array.
-  }, [prompt, selectedModel]);
+  }, [prompt, selectedModel, apiKey]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -49,6 +58,14 @@ const ImageGenerator: React.FC = () => {
     }
   };
 
+  const handleApiKeyCopy = () => {
+    if (!apiKeyUsed) return;
+    navigator.clipboard.writeText(apiKeyUsed).then(() => {
+        setApiKeyCopied(true);
+        setTimeout(() => setApiKeyCopied(false), 2000);
+    });
+  };
+    
   const handleCurlCopy = () => {
     if (!curlCommand) return;
     navigator.clipboard.writeText(curlCommand).then(() => {
@@ -57,10 +74,85 @@ const ImageGenerator: React.FC = () => {
     });
   };
 
+  const handleTestApiKey = async () => {
+    if (!apiKeyUsed) {
+        setTestStatus('error');
+        setTestMessage('No API key was used for the last successful generation.');
+        return;
+    }
+
+    setTestStatus('testing');
+    setTestMessage(null);
+    const testModel = selectedModel;
+
+    try {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${testModel}?key=${apiKeyUsed}`);
+        
+        if (response.ok) {
+            setTestStatus('success');
+            setTestMessage(`Success! The API key has access to the '${testModel}' model and should work with direct calls (cURL/Postman).`);
+            return;
+        }
+
+        setTestStatus('error');
+        let errorMessage = 'An unknown API error occurred.';
+        try {
+            const data = await response.json();
+            const apiMessage = data.error?.message;
+
+            switch (response.status) {
+                case 400:
+                    if (apiMessage && apiMessage.includes('API key not valid')) {
+                        errorMessage = 'Invalid API Key. The key is not valid or has been disabled.';
+                    } else {
+                        errorMessage = `Bad Request: ${apiMessage || 'The server could not process the request.'}`;
+                    }
+                    break;
+                case 401:
+                     errorMessage = 'Authentication Failed. The API key is likely missing or incorrect.';
+                     break;
+                case 403:
+                    errorMessage = 'Permission Denied. The API key does not have permission to access this model.';
+                    break;
+                case 429:
+                    errorMessage = `Quota Exceeded. The key has hit its usage limit for the '${testModel}' model for direct API calls.`;
+                    break;
+                default:
+                    errorMessage = `API Error (${response.status}): ${apiMessage || 'An unexpected error occurred.'}`;
+                    break;
+            }
+        } catch (jsonError) {
+             errorMessage = `API Error (${response.status}): Could not parse the error response from the server.`;
+        }
+        setTestMessage(errorMessage);
+
+    } catch (err) {
+        setTestStatus('error');
+        setTestMessage('A network error occurred. Please check your internet connection and try again.');
+        console.error("API Key test failed:", err);
+    }
+};
+
   return (
     <div className="flex flex-col items-center w-full">
       <div className="w-full max-w-3xl bg-gray-800/50 rounded-2xl p-6 md:p-8 border border-gray-700 shadow-2xl shadow-indigo-500/10">
         <div className="flex flex-col space-y-4">
+          
+          <div className="flex flex-col space-y-2">
+            <label htmlFor="api-key" className="text-lg font-semibold text-gray-300">
+              API Key
+            </label>
+            <input
+              id="api-key"
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="Enter your API key (optional, uses default if empty)"
+              className="w-full p-3 bg-gray-900 border border-gray-600 rounded-lg text-gray-200 placeholder-gray-500 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition duration-200"
+              disabled={loading}
+            />
+          </div>
+
           <div className="flex flex-col space-y-2">
             <label htmlFor="model-select" className="text-lg font-semibold text-gray-300">
               Image Generation Model
@@ -83,8 +175,6 @@ const ImageGenerator: React.FC = () => {
             </div>
           </div>
           
-          {/* Fix: Removed API Key input and related UI elements. */}
-
           <label htmlFor="prompt" className="text-lg font-semibold text-gray-300">
             Describe the image you want to create
           </label>
@@ -100,7 +190,7 @@ const ImageGenerator: React.FC = () => {
           <button
             onClick={handleGenerateImage}
             disabled={loading || !prompt}
-            className="w-full inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-indigo-500 disabled:bg-indigo-500/50 disabled:cursor-not-allowed transition-all duration-200"
+            className="w-full inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-red-500 disabled:bg-red-500/50 disabled:cursor-not-allowed transition-all duration-200"
           >
             {loading ? (
                 <>
@@ -145,7 +235,33 @@ const ImageGenerator: React.FC = () => {
         </div>
         {imageUrl && (
           <div className="mt-4 w-full flex flex-col space-y-4">
-            {/* Fix: Removed block displaying the API key used for generation. */}
+            {apiKeyUsed && (
+                 <div className="w-full bg-gray-900/70 rounded-lg border border-gray-700 text-left relative">
+                    <div className="flex items-center justify-between p-3 border-b border-gray-700">
+                        <p className="text-sm font-semibold text-gray-300">API Key Used</p>
+                        <button
+                            onClick={handleApiKeyCopy}
+                            className="p-2 rounded-md hover:bg-gray-700 transition-colors flex-shrink-0"
+                            aria-label="Copy API Key"
+                            title="Copy API Key"
+                        >
+                            {apiKeyCopied ? (
+                                <div className="flex items-center space-x-2">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                    </svg>
+                                    <span className="text-xs text-green-400">Copied!</span>
+                                </div>
+                            ) : (
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                </svg>
+                            )}
+                        </button>
+                    </div>
+                     <p className="p-4 text-xs text-gray-300 font-mono break-all">{apiKeyUsed}</p>
+                 </div>
+            )}
 
             {curlCommand && (
                 <div className="w-full bg-gray-900/70 rounded-lg border border-gray-700 text-left relative">
@@ -176,6 +292,32 @@ const ImageGenerator: React.FC = () => {
                     </pre>
                 </div>
             )}
+
+            <div className="w-full bg-gray-900/70 rounded-lg border border-gray-700 text-left p-4">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                        <h4 className="text-md font-semibold text-gray-200">API Key Usability Test</h4>
+                        <p className="text-sm text-gray-400 mt-1">Check if this key can be used for direct API calls (like with cURL or Postman).</p>
+                    </div>
+                    <button
+                        onClick={handleTestApiKey}
+                        disabled={testStatus === 'testing' || !apiKeyUsed}
+                        className="mt-3 sm:mt-0 w-full sm:w-auto inline-flex items-center justify-center px-4 py-2 border border-gray-600 text-sm font-medium rounded-md shadow-sm text-gray-200 bg-gray-700 hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-indigo-500 disabled:bg-gray-700/50 disabled:cursor-not-allowed transition-all duration-200"
+                    >
+                        {testStatus === 'testing' ? (
+                            <>
+                                <Spinner />
+                                Testing...
+                            </>
+                        ) : 'Run Test'}
+                    </button>
+                </div>
+                {testStatus !== 'idle' && testMessage && (
+                    <div className={`mt-4 p-3 rounded-md text-sm ${testStatus === 'success' ? 'bg-green-900/50 text-green-300 border border-green-700' : 'bg-red-900/50 text-red-300 border border-red-700'}`}>
+                        <p><strong className="font-bold">{testStatus === 'success' ? 'Result: ' : 'Error: '}</strong>{testMessage}</p>
+                    </div>
+                )}
+            </div>
         </div>
         )}
       </div>
